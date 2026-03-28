@@ -11,13 +11,13 @@ Use this skill when the user wants an agent or session closed cleanly and safely
 
 Close only the exact agent or session the user requested. Never guess.
 
-Invoking `$agent-session-close` by itself counts as an explicit request to close the current session context and, when possible, the current Terminal.app front window.
+Invoking `$agent-session-close` by itself counts as an explicit request to close the current session context and, when possible, force-close the current Terminal.app front window after the requested task is complete.
 
 ## What this skill can do
 
 - Close a spawned sub-agent when you have its agent id.
 - Close multiple spawned sub-agents when the requested target set is explicit.
-- If explicitly requested and the host is Terminal.app on macOS, close the front Terminal window that owns the current session via AppleScript/JXA.
+- If explicitly requested and the host is Terminal.app on macOS, force-close the front Terminal window that owns the current session via AppleScript/JXA, confirming the close sheet automatically when Terminal warns about active processes.
 - Cleanly report that the current or root session cannot self-terminate when the runtime exposes no session-close tool and the host window cannot be programmatically closed.
 
 ## What this skill must not pretend to do
@@ -32,7 +32,7 @@ Invoking `$agent-session-close` by itself counts as an explicit request to close
 1. If the user provides an agent id, close exactly that id.
 2. If the user asks to close "the agent from this task" and you created exactly one spawned agent for the task, close that one.
 3. If the user asks to close the current instance only, do not close any other agents unless they explicitly asked for them too.
-4. If the user invokes `$agent-session-close` with no extra target, treat that as a request to close the current session context and the current Terminal.app front window if supported.
+4. If the user invokes `$agent-session-close` with no extra target, treat that as a request to close the current session context and force-close the current Terminal.app front window if supported.
 5. If the user explicitly asks to close the Terminal window for the current session, target only the front Terminal.app window and only after all requested work is complete.
 6. If the target is ambiguous and there is real risk of closing the wrong thing, ask one short question.
 
@@ -40,9 +40,10 @@ Invoking `$agent-session-close` by itself counts as an explicit request to close
 
 1. Prefer `close_agent` for spawned agents.
 2. If the environment exposes a true session-level close tool, use it only for the exact requested session.
-3. If the user explicitly asked to close the current Terminal window, or invoked `$agent-session-close` with no extra target, and macOS automation is available, use `mcp__macos_automator__execute_script` to close only the front Terminal.app window.
-4. If no self-close tool exists for the current session, still attempt the Terminal front-window close path when requested or implied by bare skill invocation.
-5. If neither a self-close tool nor Terminal close path is available, say so plainly and stop after a concise final handoff.
+3. If the user explicitly asked to close the current Terminal window, or invoked `$agent-session-close` with no extra target, and macOS automation is available, use `mcp__macos_automator__execute_script` to force-close only the front Terminal.app window.
+4. The Terminal close path must auto-confirm the default close sheet if Terminal warns about active processes in the window.
+5. If no self-close tool exists for the current session, still attempt the Terminal front-window close path when requested or implied by bare skill invocation.
+6. If neither a self-close tool nor Terminal close path is available, say so plainly and stop after a concise final handoff.
 
 ## macOS Terminal close path
 
@@ -54,8 +55,19 @@ Preferred AppleScript:
 tell application "Terminal"
   if not (exists front window) then return "no-front-window"
   close front window saving no
-  return "closed-front-window"
 end tell
+
+delay 0.2
+
+tell application "System Events"
+  tell process "Terminal"
+    if exists sheet 1 of front window then
+      key code 36
+    end if
+  end tell
+end tell
+
+return "force-closed-front-window"
 ```
 
 Rules:
@@ -64,6 +76,7 @@ Rules:
 - Close only `front window`.
 - Do not iterate all windows or all tabs.
 - Run it only after the final user-facing message is ready.
+- If Terminal shows the active-process confirmation sheet, accept the default button automatically.
 - If the runtime is not hosted in Terminal.app, report the limitation instead of improvising.
 
 ## Response contract
@@ -72,7 +85,7 @@ After attempting a close:
 
 - State which agent ids were closed.
 - State which requested targets could not be closed and why.
-- If the current Terminal window was explicitly requested and successfully closed, say that the front Terminal window was closed.
+- If the current Terminal window was explicitly requested and successfully closed, say that the front Terminal window was force-closed.
 - If the current session cannot self-terminate, say: `No spawned agents remain open on my side. The current session must be closed by the host or UI.`
 
 ## Safety checks
@@ -95,7 +108,7 @@ After attempting a close:
   Action: close only the tracked ids created for the current task and report each result.
 
 - User: `$agent-session-close`
-  Action: treat the invocation itself as an explicit request to close the current session context and the front Terminal.app window if supported.
+  Action: treat the invocation itself as an explicit request to close the current session context and force-close the front Terminal.app window if supported.
 
 - User: `close this codex session and the Terminal window`
   Action: close any explicitly requested spawned agents first, then run Terminal front-window close automation if available, otherwise state the host limitation plainly.

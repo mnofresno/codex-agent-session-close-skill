@@ -19,13 +19,14 @@ Invoke the skill explicitly with:
 $agent-session-close
 ```
 
-A bare invocation now counts as an explicit request to close the current session context and, when supported, the current front `Terminal.app` window.
+A bare invocation now counts as an explicit request to finish the current task and then force-close the current session context and, when supported, the current front `Terminal.app` window.
 
 ## What it does
 
 - closes spawned sub-agents when the runtime exposes an agent id and a close tool
 - closes only the exact targets requested
-- can close the current front Terminal.app window on macOS when the user explicitly asks for it, or when the skill is invoked by itself
+- can force-close the current front Terminal.app window on macOS when the user explicitly asks for it, or when the skill is invoked by itself
+- auto-confirms Terminal's active-process close sheet when it appears
 - states clearly when the current main session cannot self-terminate because the runtime exposes no real session-close API
 
 ## Important limitations
