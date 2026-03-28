@@ -13,12 +13,14 @@ Close only the exact agent or session the user requested. Never guess.
 
 Invoking `$agent-session-close` by itself counts as an explicit request to close the current session context and, when possible, force-close the current terminal window after the requested task is complete.
 
+The terminal window must be identified by a stable handle captured when the skill starts, not by whichever window is focused at the end.
+
 ## What this skill can do
 
 - Close a spawned sub-agent when you have its agent id.
 - Close multiple spawned sub-agents when the requested target set is explicit.
-- If explicitly requested and the host is Terminal.app on macOS, force-close the front Terminal window that owns the current session via AppleScript/JXA, confirming the close sheet automatically when Terminal warns about active processes.
-- If explicitly requested and the host is Linux on X11, force-close the active terminal window via `xdotool` or `wmctrl`.
+- If explicitly requested and the host is Terminal.app on macOS, force-close the Terminal window that owns the current session using a stable `tty`-based lookup, confirming the close sheet automatically when Terminal warns about active processes.
+- If explicitly requested and the host is Linux on X11, force-close the terminal window captured at skill start via `WINDOWID`, `xdotool`, or `wmctrl`.
 - Cleanly report that the current or root session cannot self-terminate when the runtime exposes no session-close tool and the host window cannot be programmatically closed.
 
 ## What this skill must not pretend to do
@@ -34,20 +36,30 @@ Invoking `$agent-session-close` by itself counts as an explicit request to close
 2. If the user asks to close "the agent from this task" and you created exactly one spawned agent for the task, close that one.
 3. If the user asks to close the current instance only, do not close any other agents unless they explicitly asked for them too.
 4. If the user invokes `$agent-session-close` with no extra target, treat that as a request to close the current session context and force-close the current terminal window if supported.
-5. If the user explicitly asks to close the terminal window for the current session, target only the current host window and only after all requested work is complete.
+5. If the user explicitly asks to close the terminal window for the current session, target only the host window captured for this session and only after all requested work is complete.
 6. If the target is ambiguous and there is real risk of closing the wrong thing, ask one short question.
 
 ## Tool workflow
 
 1. Prefer `close_agent` for spawned agents.
 2. If the environment exposes a true session-level close tool, use it only for the exact requested session.
-3. If the user explicitly asked to close the current terminal window, or invoked `$agent-session-close` with no extra target, detect the host close path:
+3. If the user explicitly asked to close the current terminal window, or invoked `$agent-session-close` with no extra target, capture a stable host-window handle immediately when the skill starts.
+4. Detect the host close path:
    - macOS `Terminal.app`: use `mcp__macos_automator__execute_script`
    - Linux X11: use `exec_command` with `xdotool` or `wmctrl`
-4. The macOS Terminal close path must auto-confirm the default close sheet if Terminal warns about active processes in the window.
-5. The Linux close path must target only the active window and must not enumerate or close unrelated windows.
-6. If no self-close tool exists for the current session, still attempt the host window close path when requested or implied by bare skill invocation.
-7. If neither a self-close tool nor a supported host window close path is available, say so plainly and stop after a concise final handoff.
+5. The macOS Terminal close path must auto-confirm the default close sheet if Terminal warns about active processes in the window.
+6. The Linux close path must target only the captured window id and must not depend on the active window at close time.
+7. If no self-close tool exists for the current session, still attempt the host window close path when requested or implied by bare skill invocation.
+8. If neither a self-close tool nor a supported host window close path is available, say so plainly and stop after a concise final handoff.
+
+## Stable handle capture
+
+Capture the host-window handle before doing the user's requested work.
+
+- macOS Terminal.app: capture the current shell `tty` with `tty`
+- Linux X11: capture `$WINDOWID` if present; otherwise capture the active window id immediately at skill start and reuse that exact id later
+
+Do not re-resolve the target from focus at the end.
 
 ## macOS Terminal close path
 
@@ -56,29 +68,42 @@ Use this only when the user explicitly asks to close the current Terminal window
 Preferred AppleScript:
 
 ```applescript
-tell application "Terminal"
-  if not (exists front window) then return "no-front-window"
-  close front window saving no
-end tell
-
-delay 0.2
-
-tell application "System Events"
-  tell process "Terminal"
-    if exists sheet 1 of front window then
-      key code 36
-    end if
+on run argv
+  set targetTty to item 1 of argv
+  tell application "Terminal"
+    repeat with w in windows
+      repeat with t in tabs of w
+        try
+          if tty of t is equal to targetTty then
+            close w saving no
+            delay 0.2
+            tell application "System Events"
+              tell process "Terminal"
+                if exists sheet 1 of front window then
+                  key code 36
+                end if
+              end tell
+            end tell
+            return "force-closed-terminal-window-by-tty"
+          end if
+        end try
+      end repeat
+    end repeat
   end tell
-end tell
+  return "tty-not-found"
+end run
+```
 
-return "force-closed-front-window"
+Shell-side capture step before work:
+
+```bash
+SESSION_TTY="$(tty)"
 ```
 
 Rules:
 
 - Target `Terminal` only, not every terminal emulator.
-- Close only `front window`.
-- Do not iterate all windows or all tabs.
+- Resolve the owning window from the captured `tty`.
 - Run it only after the final user-facing message is ready.
 - If Terminal shows the active-process confirmation sheet, accept the default button automatically.
 - If the runtime is not hosted in Terminal.app, report the limitation instead of improvising.
@@ -87,14 +112,27 @@ Rules:
 
 Use this only when the host is Linux with X11 and the user explicitly asks to close the current terminal window or invokes `$agent-session-close` bare.
 
-Preferred shell sequence:
+Preferred capture step before work:
 
 ```bash
-if command -v xdotool >/dev/null 2>&1; then
-  xdotool getactivewindow windowclose
-elif command -v wmctrl >/dev/null 2>&1; then
-  active_id="$(xprop -root _NET_ACTIVE_WINDOW | awk '{print $5}')"
-  [ -n "$active_id" ] && wmctrl -ic "$active_id"
+if [ -n "${WINDOWID:-}" ]; then
+  SESSION_WINDOW_ID="$WINDOWID"
+elif command -v xdotool >/dev/null 2>&1; then
+  SESSION_WINDOW_ID="$(xdotool getactivewindow)"
+elif command -v xprop >/dev/null 2>&1; then
+  SESSION_WINDOW_ID="$(xprop -root _NET_ACTIVE_WINDOW | awk '{print $5}')"
+else
+  SESSION_WINDOW_ID=""
+fi
+```
+
+Preferred close step:
+
+```bash
+if [ -n "${SESSION_WINDOW_ID:-}" ] && command -v xdotool >/dev/null 2>&1; then
+  xdotool windowclose "$SESSION_WINDOW_ID"
+elif [ -n "${SESSION_WINDOW_ID:-}" ] && command -v wmctrl >/dev/null 2>&1; then
+  wmctrl -ic "$SESSION_WINDOW_ID"
 else
   echo "no-linux-window-close-tool"
   exit 1
@@ -104,8 +142,8 @@ fi
 Rules:
 
 - Support Linux only on X11 with `xdotool` or `wmctrl`.
-- Target only the active window.
-- Do not enumerate all windows.
+- Target only the captured window id for this session.
+- Do not use the active window at close time.
 - Do not claim support for Wayland unless a verified compositor-specific close path is available.
 - Run it only after the final user-facing message is ready.
 
@@ -122,7 +160,7 @@ After attempting a close:
 
 - Finish or summarize critical work before closing a spawned agent.
 - Prepare the final response before triggering Terminal window close automation.
-- Detect the host before choosing the close path.
+- Detect the host and capture the stable window handle before doing the requested work.
 - Reuse known agent ids from the current thread; do not infer ids from branch names, PR numbers, or filenames.
 - If `close_agent` returns an error, surface the exact failure instead of masking it.
 - If host window automation fails, surface the exact failure and do not claim the session was closed.

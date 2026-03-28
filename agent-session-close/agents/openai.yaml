@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent Session Close"
   short_description: "Close agents safely without touching others"
-  default_prompt: "Use $agent-session-close to finish the requested task, then force-close the current terminal window on supported macOS or Linux hosts without touching unrelated agents."
+  default_prompt: "Use $agent-session-close to finish the requested task, capture a stable window handle, and then force-close that exact terminal window on supported macOS or Linux hosts."

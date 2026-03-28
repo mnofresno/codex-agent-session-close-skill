@@ -23,21 +23,17 @@ A bare invocation counts as an explicit request to finish the current task and t
 
 ## Host support
 
-- macOS `Terminal.app`: supported, with automatic confirmation of the active-process close sheet
-- Linux X11: supported through `xdotool` or `wmctrl`
+- macOS `Terminal.app`: supported, using a stable `tty` lookup to find the owning window
+- Linux X11: supported through a captured window id plus `xdotool` or `wmctrl`
 - Linux Wayland: not claimed as supported unless a compositor-specific close path is added later
 
-## What it does
+## Important fix
 
-- closes spawned sub-agents when the runtime exposes an agent id and a close tool
-- closes only the exact targets requested
-- can force-close the current front terminal window on supported macOS and Linux hosts
-- auto-confirms Terminal's active-process close sheet on macOS when it appears
-- states clearly when the current main session cannot self-terminate because the runtime exposes no real session-close API
+The skill no longer relies on whichever window is focused at the end. It now captures a stable handle at skill start and closes that exact window later.
 
 ## Important limitations
 
-- macOS close is scoped to the front `Terminal.app` window only
-- Linux close is scoped to the current active X11 window only
+- macOS close is scoped to the Terminal window that owns the captured `tty`
+- Linux close is scoped to the captured X11 window id for this session
 - it does not touch unrelated windows or tabs
 - it does not fake self-termination if the host window cannot be programmatically closed
