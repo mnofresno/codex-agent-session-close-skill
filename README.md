@@ -37,3 +37,9 @@ The skill no longer relies on whichever window is focused at the end. It now cap
 - Linux close is scoped to the captured X11 window id for this session
 - it does not touch unrelated windows or tabs
 - it does not fake self-termination if the host window cannot be programmatically closed
+
+## Follow-up prompts
+
+This repository contains the skill-specific suppression for post-task follow-up offers when `$agent-session-close` is active.
+
+If you also want Codex to stop suggesting "Do you want me to..." style next steps globally, add a rule in your home or project `AGENTS.md` that overrides default next-step suggestions in final responses.

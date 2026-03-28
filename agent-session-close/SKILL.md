@@ -56,10 +56,22 @@ The terminal window must be identified by a stable handle captured when the skil
 
 Capture the host-window handle before doing the user's requested work.
 
-- macOS Terminal.app: capture the current shell `tty` with `tty`
+- macOS Terminal.app: capture the controlling `tty` for the owning shell or Codex process. Prefer interactive `tty`, but do not stop there.
 - Linux X11: capture `$WINDOWID` if present; otherwise capture the active window id immediately at skill start and reuse that exact id later
 
 Do not re-resolve the target from focus at the end.
+
+### macOS Terminal.app handle capture order
+
+Use this order and keep the first non-empty match:
+
+1. `tty`
+2. `ps -o tty= -p "$PPID"` if the immediate parent carries the terminal `tty`
+3. Walk the parent process chain and read `tty` from the first ancestor that is attached to `/dev/ttys*`
+
+`TERM_PROGRAM=Apple_Terminal` and `TERM_SESSION_ID` are useful signals that the host is Terminal.app, but they are not sufficient on their own to pick a window safely. Use them as supporting evidence, not as the sole close target.
+
+If `tty` prints `not a tty`, that does not prove the session is unbound to Terminal.app. In Codex-managed executions, commands often run without an interactive stdin even though the owning shell and Codex process still have a stable `tty` visible through `ps`.
 
 ## macOS Terminal close path
 
@@ -100,10 +112,64 @@ Shell-side capture step before work:
 SESSION_TTY="$(tty)"
 ```
 
+Robust capture step for Codex-managed runtimes:
+
+```bash
+capture_session_tty() {
+  local candidate=""
+  candidate="$(tty 2>/dev/null || true)"
+  if [ -n "$candidate" ] && [ "$candidate" != "not a tty" ]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  candidate="$(ps -o tty= -p "${PPID:-}" 2>/dev/null | tr -d ' ' || true)"
+  if [ -n "$candidate" ] && [ "$candidate" != "??" ]; then
+    printf '/dev/%s\n' "$candidate"
+    return 0
+  fi
+
+  python3 - <<'PY'
+import os
+import subprocess
+
+pid = os.getppid()
+seen = set()
+
+while pid and pid not in seen:
+    seen.add(pid)
+    try:
+        tty = subprocess.check_output(
+            ["ps", "-o", "tty=", "-p", str(pid)], text=True
+        ).strip()
+    except Exception:
+        tty = ""
+
+    if tty and tty != "??":
+        print(f"/dev/{tty}")
+        raise SystemExit(0)
+
+    try:
+        ppid = subprocess.check_output(
+            ["ps", "-o", "ppid=", "-p", str(pid)], text=True
+        ).strip()
+    except Exception:
+        break
+
+    if not ppid:
+        break
+    pid = int(ppid)
+PY
+}
+
+SESSION_TTY="$(capture_session_tty)"
+```
+
 Rules:
 
 - Target `Terminal` only, not every terminal emulator.
 - Resolve the owning window from the captured `tty`.
+- If `tty` fails but ancestry lookup returns a `tty`, continue with that value instead of reporting failure.
 - Run it only after the final user-facing message is ready.
 - If Terminal shows the active-process confirmation sheet, accept the default button automatically.
 - If the runtime is not hosted in Terminal.app, report the limitation instead of improvising.
@@ -155,6 +221,10 @@ After attempting a close:
 - State which requested targets could not be closed and why.
 - If the current terminal window was explicitly requested and successfully closed, say that the current terminal window was force-closed.
 - If the current session cannot self-terminate, say: `No spawned agents remain open on my side. The current session must be closed by the host or UI.`
+- Do not add follow-up offers, optional improvements, or "Do you want me to..." questions after the requested work is complete.
+- Do not suggest next steps when this skill is active unless the user explicitly asked for options.
+- Do not add follow-up offers, optional improvements, or "Do you want me to..." questions after the requested work is complete.
+- Do not suggest next steps when this skill is active unless the user explicitly asked for options.
 
 ## Safety checks
 
