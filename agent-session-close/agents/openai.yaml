@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent Session Close"
   short_description: "Close agents safely without touching others"
-  default_prompt: "Use $agent-session-close to shut down the requested agent or session safely and explain any runtime limits."
+  default_prompt: "Use $agent-session-close to shut down the requested agent or session safely, and close the current Terminal window only when explicitly requested and supported."

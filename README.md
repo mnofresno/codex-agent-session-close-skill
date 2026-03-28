@@ -23,8 +23,11 @@ $agent-session-close
 
 - closes spawned sub-agents when the runtime exposes an agent id and a close tool
 - closes only the exact targets requested
+- can close the current front Terminal.app window on macOS when the user explicitly asks for it
 - states clearly when the current main session cannot self-terminate because the runtime exposes no real session-close API
 
-## Important limitation
+## Important limitations
 
-This skill does not fake self-termination. If the platform cannot close the current root session from inside the agent runtime, the skill forces the agent to say so plainly instead of claiming success.
+- Terminal window close is scoped to the front `Terminal.app` window only
+- it does not touch unrelated windows or tabs
+- it does not fake self-termination if the host is not Terminal.app or the runtime cannot close the root session from inside the agent
